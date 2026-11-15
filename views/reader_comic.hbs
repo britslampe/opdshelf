@@ -1,0 +1,100 @@
+<div data-controls>
+  <span id="counter" class="count"></span>
+  <button type="button" id="direction" class="icon-btn" title="{{t "Reading direction"}}" aria-label="{{t "Reading direction"}}"><i class="fas fa-right-left"></i></button>
+</div>
+
+<main class="stage comic" id="stage">
+  <h1 class="visually-hidden">{{book.title}}</h1>
+  <div class="comic-stage">
+    <img id="pageImg" alt="">
+    <button type="button" id="left" class="tap left" title="{{t "Previous page"}}" aria-label="{{t "Previous page"}}"></button>
+    <button type="button" id="right" class="tap right" title="{{t "Next page"}}" aria-label="{{t "Next page"}}"></button>
+  </div>
+  <div id="status" class="loading"><span><i class="fas fa-spinner fa-spin"></i> {{t "Loading…"}}</span></div>
+</main>
+
+<footer class="reader-foot">
+  <input id="slider" type="range" min="1" value="1" aria-label="{{t "Page"}}">
+</footer>
+
+<script data-path="{{urlPath book.path}}" data-key="{{book.path}}" data-document="{{document}}">
+  (function () {
+    const { path, key, document: documentId } = document.currentScript.dataset;
+    const legacyKey = 'opdshelf:comic:' + key;
+    const sync = ReaderSync.create(documentId);
+    let opened = false;
+    const img = document.getElementById('pageImg');
+    const counter = document.getElementById('counter');
+    const slider = document.getElementById('slider');
+    const status = document.getElementById('status');
+    let count = 0;
+    let current = 0;
+    let rtl = storeGet('opdshelf:comic-rtl') === '1';
+
+    const src = (n) => `/page/${path}?n=${n}`;
+
+    function show(n) {
+      if (n < 0 || n >= count) return;
+      current = n;
+      img.src = src(n);
+      counter.textContent = (n + 1) + ' / ' + count;
+      slider.value = n + 1;
+      // Saved as the page number from 1, like KOReader, once the reader moves
+      if (opened) sync.save({ progress: String(n + 1), percentage: (n + 1) / count });
+      // Preload the next pages
+      [n + 1, n + 2].filter((p) => p < count).forEach((p) => { new Image().src = src(p); });
+    }
+
+    const next = () => show(current + 1);
+    const prev = () => show(current - 1);
+    document.getElementById('left').onclick = () => (rtl ? next : prev)();
+    document.getElementById('right').onclick = () => (rtl ? prev : next)();
+    document.getElementById('direction').onclick = () => {
+      rtl = !rtl;
+      storeSet('opdshelf:comic-rtl', rtl ? '1' : '0');
+      slider.style.direction = rtl ? 'rtl' : 'ltr';
+      document.getElementById('direction').setAttribute('aria-pressed', rtl);
+    };
+    document.getElementById('direction').setAttribute('aria-pressed', rtl);
+    slider.style.direction = rtl ? 'rtl' : 'ltr';
+    slider.oninput = () => show(Number(slider.value) - 1);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowLeft') (rtl ? next : prev)();
+      if (e.key === 'ArrowRight' || e.key === ' ') (rtl ? prev : next)();
+    });
+
+    let touchX = null;
+    const stage = document.getElementById('stage');
+    stage.addEventListener('touchstart', (e) => { touchX = e.changedTouches[0].screenX; }, { passive: true });
+    stage.addEventListener('touchend', (e) => {
+      if (touchX === null) return;
+      const dx = e.changedTouches[0].screenX - touchX;
+      if (Math.abs(dx) > 50) ((dx < 0) !== rtl ? next : prev)();
+      touchX = null;
+    });
+
+    img.onload = () => { status.hidden = true; };
+    Promise.all([
+      fetch(`/pages/${path}`).then((r) => { if (!r.ok) throw new Error(r.statusText); return r.json(); }),
+      sync.load(),
+    ])
+      .then(([data, { record, from }]) => {
+        count = data.count;
+        if (count === 0) throw new Error(t('no images found'));
+        slider.max = count;
+        const start = record
+          ? (Number(record.progress) || Math.round(record.percentage * count) || 1) - 1
+          : Number(storeGet(legacyKey) || 0);
+        show(Math.min(Math.max(0, start), count - 1));
+        opened = true;
+        if (from) ReaderSync.toast(t('Continuing from {device} (page {page})', { device: from, page: current + 1 }));
+        sync.follow((remote) => ReaderSync.remoteToast(remote, () => {
+          const page = (Number(remote.progress) || Math.round(remote.percentage * count) || 1) - 1;
+          opened = false;
+          show(Math.min(Math.max(0, page), count - 1));
+          opened = true;
+        }));
+      })
+      .catch((err) => { status.textContent = t('Cannot open this comic: {reason}', { reason: err.message }); });
+  })();
+</script>

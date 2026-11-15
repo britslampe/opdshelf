@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="{{lang}}">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{title}}</title>
+  <link rel="icon" href="/static/icon.png" type="image/png">
+  <link rel="stylesheet" href="/static/vendor/fontawesome/css/all.min.css" />
+  <link rel="stylesheet" href="/static/styles/app.css?v={{v}}">
+  <script src="/static/app/common.js?v={{v}}" data-i18n="{{i18n}}"></script>
+  <script>
+    function storeGet(key) {
+      try { return localStorage.getItem(key); } catch { return null; }
+    }
+
+    function storeSet(key, value) {
+      try { localStorage.setItem(key, value); } catch { }
+    }
+
+    (function () {
+      const savedTheme = storeGet("theme");
+      const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      if (savedTheme === 'dark' || (!savedTheme && systemDark)) {
+        document.documentElement.classList.add('dark');
+      }
+    })();
+
+    // Page colour of the reader: light, gray or dark
+    function readerPaper() {
+      const saved = storeGet('opdshelf:paper');
+      if (['light', 'gray', 'dark'].includes(saved)) return saved;
+      return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+    }
+  </script>
+  <script src="/static/reader/sync.js?v={{v}}"></script>
+</head>
+
+<body>
+  <div class="reader" id="reader">
+    <header class="reader-bar">
+      <a href="/info/{{urlPath book.path}}" class="icon-btn" title="{{t "Back to the library"}}" aria-label="{{t "Back to the library"}}"><i class="fas fa-arrow-left"></i></a>
+      <div class="title" title="{{book.title}}">{{book.title}}{{#if book.authors}} <span>· {{book.authors}}</span>{{/if}}</div>
+      <div id="controls"></div>
+      <span class="sync-state" id="syncState" data-state="saved" role="img"><i class="fas fa-cloud"></i></span>
+      <div class="segmented" role="group" aria-label="{{t "Page colour"}}">
+        <button type="button" class="icon-btn" data-paper="light" title="{{t "Light page"}}" aria-label="{{t "Light page"}}"><span class="swatch light" aria-hidden="true"></span></button>
+        <button type="button" class="icon-btn" data-paper="gray" title="{{t "Gray page"}}" aria-label="{{t "Gray page"}}"><span class="swatch gray" aria-hidden="true"></span></button>
+        <button type="button" class="icon-btn" data-paper="dark" title="{{t "Dark page"}}" aria-label="{{t "Dark page"}}"><span class="swatch dark" aria-hidden="true"></span></button>
+      </div>
+    </header>
+
+    {{{body}}}
+  </div>
+
+  <script>
+    // Each reader declares its toolbar buttons in a [data-controls] element
+    document.querySelectorAll('[data-controls]').forEach((el) => {
+      document.getElementById('controls').append(...el.children);
+      el.remove();
+    });
+
+    function setPaper(paper) {
+      document.getElementById('reader').dataset.paper = paper;
+      document.querySelectorAll('[data-paper]').forEach((b) => {
+        if (b.tagName === 'BUTTON') b.setAttribute('aria-pressed', b.dataset.paper === paper);
+      });
+      document.dispatchEvent(new CustomEvent('paperchange', { detail: { paper } }));
+    }
+    // On small phones only the current colour shows, and it cycles to the next one
+    const paperOrder = ['light', 'gray', 'dark'];
+    const compactBar = window.matchMedia('(max-width: 520px)');
+    document.querySelectorAll('button[data-paper]').forEach((b) => b.addEventListener('click', () => {
+      let paper = b.dataset.paper;
+      if (compactBar.matches && b.getAttribute('aria-pressed') === 'true') {
+        paper = paperOrder[(paperOrder.indexOf(paper) + 1) % paperOrder.length];
+      }
+      storeSet('opdshelf:paper', paper);
+      setPaper(paper);
+      document.querySelector(`button[data-paper="${paper}"]`).focus();
+    }));
+    setPaper(readerPaper());
+  </script>
+</body>
+
+</html>

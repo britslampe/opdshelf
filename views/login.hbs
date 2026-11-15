@@ -1,42 +1,54 @@
-<div class="flex items-center justify-center min-h-[calc(100vh-16rem)]">
-  <div class="theme-card w-full max-w-md p-8 animate-fade-in-up">
-    <div class="text-center mb-4">
-      <div
-        class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary-100 dark:bg-primary-900/30 mb-4">
-        <i class="fas fa-user-shield text-2xl text-primary-600 dark:text-primary-400"></i>
-      </div>
-      <h2 class="text-2xl font-bold text-neutral-900 dark:text-white">Admin Login</h2>
-      <p class="text-sm text-neutral-500 dark:text-neutral-400 mt-2">Please sign in to continue</p>
+<main class="login">
+  <form action="/user/login" method="POST" class="login-card" id="loginForm">
+    <div class="brand"><img src="/static/icon.png" alt="">OPDShelf</div>
+    <div>
+      <h1>{{t "Sign in"}}</h1>
+      <p>{{t "Your library, your reading positions and your devices, in one place."}}</p>
     </div>
 
-    <form action="/user/login" method="POST" class="space-y-6">
-      <div class="mb-4">
-        <label for="username"
-          class="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">Username</label>
-        <div class="relative">
-          <div class="h-full absolute inset-y-0 left-0 w-10 ml-px flex items-center justify-center pointer-events-none">
-            <i class="fas fa-user text-neutral-400"></i>
-          </div>
-          <input type="text" id="username" name="username" required class="input-field"
-            placeholder="Enter your username">
-        </div>
-      </div>
+    {{#if error}}
+    <div class="notice error" role="alert" id="loginError"><i class="fas fa-circle-exclamation"></i>{{error}}</div>
+    {{/if}}
 
-      <div class="mb-4">
-        <label for="password"
-          class="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">Password</label>
-        <div class="relative">
-          <div class="h-full absolute inset-y-0 left-0 w-10 ml-px flex items-center justify-center pointer-events-none">
-            <i class="fas fa-lock text-neutral-400"></i>
-          </div>
-          <input type="password" id="password" name="password" required class="input-field" placeholder="••••••••">
-        </div>
-      </div>
+    <label class="field" for="username">
+      <span>{{t "Username"}}</span>
+      <input type="text" id="username" name="username" autocomplete="username" autocapitalize="none"
+        spellcheck="false" required class="input" value="{{typedUsername}}" {{#if error}}aria-invalid="true" aria-describedby="loginError"{{/if}} {{#unless typedUsername}}autofocus{{/unless}}>
+    </label>
+    <label class="field" for="password">
+      <span>{{t "Password"}}</span>
+      <span class="password-row">
+        <input type="password" id="password" name="password" autocomplete="current-password" required class="input" {{#if error}}aria-invalid="true" aria-describedby="loginError"{{/if}}>
+        <button type="button" class="icon-btn" id="showPassword" aria-pressed="false" title="{{t "Show password"}}"
+          aria-label="{{t "Show password"}}"><i class="far fa-eye"></i></button>
+      </span>
+    </label>
+    <p class="caps" id="capsLock" hidden><i class="fas fa-arrow-up"></i>{{t "Caps Lock is on"}}</p>
 
-      <button type="submit" class="w-full btn-primary flex justify-center items-center gap-2">
-        <span>Sign In</span>
-        <i class="fas fa-arrow-right text-sm opacity-80"></i>
-      </button>
-    </form>
-  </div>
-</div>
+    <button type="submit" class="btn btn-primary btn-wide" id="loginBtn">{{t "Sign in"}}</button>
+    <p class="login-foot">{{t "Reading apps such as KOReader sign in with the same user and password."}}</p>
+  </form>
+</main>
+<script>
+  (function () {
+    const password = document.getElementById('password');
+    const toggle = document.getElementById('showPassword');
+    toggle.addEventListener('click', () => {
+      const show = password.type === 'password';
+      password.type = show ? 'text' : 'password';
+      toggle.setAttribute('aria-pressed', show);
+      toggle.querySelector('i').className = show ? 'far fa-eye-slash' : 'far fa-eye';
+      password.focus();
+    });
+    password.addEventListener('keyup', (e) => {
+      if (e.getModifierState) document.getElementById('capsLock').hidden = !e.getModifierState('CapsLock');
+    });
+    document.getElementById('loginForm').addEventListener('submit', () => {
+      const button = document.getElementById('loginBtn');
+      button.disabled = true;
+      button.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+      button.append(' ' + t('Signing in…'));
+    });
+    if (document.getElementById('username').value) password.focus();
+  })();
+</script>

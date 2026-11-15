@@ -1,0 +1,362 @@
+<div data-controls>
+  <button type="button" id="tocBtn" class="icon-btn" title="{{t "Contents"}}" aria-label="{{t "Contents"}}"><i class="fas fa-list-ul"></i></button>
+  <button type="button" id="smaller" class="icon-btn" title="{{t "Smaller text"}}" aria-label="{{t "Smaller text"}}"><i class="fas fa-minus"></i></button>
+  <button type="button" id="larger" class="icon-btn" title="{{t "Larger text"}}" aria-label="{{t "Larger text"}}"><i class="fas fa-plus"></i></button>
+  <button type="button" id="notesBtn" class="icon-btn notes-btn" title="{{t "Highlights and notes"}}" aria-label="{{t "Highlights and notes"}}" aria-pressed="false"><i class="fas fa-highlighter"></i><span id="notesCount" class="notes-count" hidden></span></button>
+</div>
+
+<nav class="toc" id="toc" aria-label="{{t "Contents"}}" hidden>
+  <h2>{{t "Contents"}}</h2>
+  <div id="tocList"></div>
+</nav>
+
+<main class="stage">
+  <h1 class="visually-hidden">{{book.title}}</h1>
+  <div id="viewer" class="epub-viewer"></div>
+  <button type="button" id="prev" class="page-turn prev" title="{{t "Previous page"}}" aria-label="{{t "Previous page"}}"><i class="fas fa-chevron-left"></i></button>
+  <button type="button" id="next" class="page-turn next" title="{{t "Next page"}}" aria-label="{{t "Next page"}}"><i class="fas fa-chevron-right"></i></button>
+  <div id="selBar" class="sel-bar" role="toolbar" aria-label="{{t "Selected text"}}" hidden>
+    <button type="button" id="selNote" class="sel-action"><i class="far fa-note-sticky"></i><span>{{t "Note"}}</span></button>
+    <button type="button" id="selCopy" class="sel-action" title="{{t "Copy"}}" aria-label="{{t "Copy"}}"><i class="far fa-copy"></i></button>
+    <button type="button" id="markBtn" class="sel-action" title="{{t "Set as last position"}}"><i class="fas fa-location-dot"></i><span>{{t "Last position"}}</span></button>
+  </div>
+  <aside class="notes-panel" id="notesPanel" aria-label="{{t "Highlights and notes"}}" hidden>
+    <header>
+      <h2>{{t "Highlights and notes"}}</h2>
+      <button type="button" id="notesClose" class="icon-btn" title="{{t "Close"}}" aria-label="{{t "Close"}}"><i class="fas fa-xmark"></i></button>
+    </header>
+    <div id="notesList"></div>
+  </aside>
+  <div id="status" class="loading"><span><i class="fas fa-spinner fa-spin"></i> {{t "Loading…"}}</span></div>
+</main>
+
+<dialog class="note-dialog" id="noteDialog" aria-labelledby="noteTitle">
+  <form id="noteForm">
+    <h2 id="noteTitle">{{t "Note"}}</h2>
+    <blockquote id="noteQuote"></blockquote>
+    <textarea id="noteText" class="input" rows="5" placeholder="{{t "Write a note…"}}" aria-label="{{t "Note"}}"></textarea>
+    <div class="note-row">
+      <div id="noteColors"></div>
+      <button type="button" id="noteDelete" class="icon-btn" title="{{t "Delete"}}" aria-label="{{t "Delete"}}"><i class="far fa-trash-can"></i></button>
+    </div>
+    <div class="note-actions">
+      <button type="button" id="noteCancel" class="btn">{{t "Cancel"}}</button>
+      <button type="submit" class="btn btn-primary">{{t "Save"}}</button>
+    </div>
+  </form>
+</dialog>
+
+<footer class="reader-foot">
+  <span id="chapter"></span>
+  <div class="track"><b id="progressBar"></b></div>
+  <span id="progress"></span>
+</footer>
+
+<script src="/static/vendor/epubjs/jszip.min.js"></script>
+<script src="/static/vendor/epubjs/epub.min.js"></script>
+<script src="/static/reader/xpointer.js"></script>
+<script src="/static/reader/typography.js?v={{v}}"></script>
+<script src="/static/app/notes.js?v={{v}}"></script>
+<script src="/static/reader/highlights.js?v={{v}}"></script>
+<script data-url="/download/{{urlPath book.path}}?inline=1" data-key="{{book.path}}" data-document="{{document}}">
+  (function () {
+    const { url, key, document: documentId } = document.currentScript.dataset;
+    const legacyKey = 'opdshelf:epub:' + key;
+    const sync = ReaderSync.create(documentId);
+    const status = document.getElementById('status');
+    const progress = document.getElementById('progress');
+    const progressBar = document.getElementById('progressBar');
+    const chapter = document.getElementById('chapter');
+    const toc = document.getElementById('toc');
+    const tocList = document.getElementById('tocList');
+    const markBtn = document.getElementById('markBtn');
+    const notes = Notes.store(documentId);
+
+    const book = ePub(url, { openAs: 'epub' });
+    // Two pages side by side from 600px, so wide margins keep the spread
+    const rendition = book.renderTo('viewer', { width: '100%', height: '100%', spread: 'auto', minSpreadWidth: 600 });
+
+    const papers = {
+      light: { background: '#ffffff', color: '#111111', link: '#111111' },
+      gray: { background: '#e9e9e9', color: '#1e1e1e', link: '#1e1e1e' },
+      dark: { background: '#0b0b0b', color: '#d0d0d0', link: '#ececec' },
+    };
+    Object.entries(papers).forEach(([name, p]) => rendition.themes.register(name, {
+      'body': { 'background': p.background + ' !important', 'color': p.color + ' !important' },
+      'a': { 'color': p.link + ' !important' },
+    }));
+    rendition.themes.select(readerPaper());
+    document.addEventListener('paperchange', (e) => rendition.themes.select(e.detail.paper));
+
+    let fontSize = parseInt(storeGet('opdshelf:fontsize') || '100', 10);
+    const applyFont = () => { rendition.themes.fontSize(fontSize + '%'); storeSet('opdshelf:fontsize', fontSize); };
+    applyFont();
+    document.getElementById('smaller').onclick = () => { fontSize = Math.max(60, fontSize - 10); applyFont(); };
+    document.getElementById('larger').onclick = () => { fontSize = Math.min(250, fontSize + 10); applyFont(); };
+
+    // Font, line spacing and justification go in a style sheet of each page;
+    // the margins are the space around the viewer
+    let typoCss = '';
+    const injectTypo = (contents) => {
+      const doc = contents.document;
+      let style = doc.getElementById('opdshelf-typography');
+      if (!style) {
+        style = doc.createElement('style');
+        style.id = 'opdshelf-typography';
+        doc.head.append(style);
+      }
+      style.textContent = typoCss;
+    };
+    rendition.hooks.content.register(injectTypo);
+    ReaderTypography.mount((s) => {
+      typoCss = [
+        s.fontFamily ? `body, p, div, li, blockquote, span { font-family: ${s.fontFamily} !important; }` : '',
+        `body, p, li, blockquote { line-height: ${s.lineHeight} !important; }`,
+        s.justify ? 'p { text-align: justify !important; hyphens: auto; }' : '',
+      ].join('\n');
+      document.getElementById('viewer').style.setProperty('--page-margin', (s.margin * 100) + '%');
+      rendition.getContents().forEach(injectTypo);
+      requestAnimationFrame(() => { if (rendition.manager) rendition.resize(); });
+    });
+
+    // The contents sit beside the page on wide screens and over it on phones
+    const wide = window.matchMedia('(min-width: 761px)');
+    function showToc(open) {
+      toc.hidden = !open;
+      document.getElementById('tocBtn').setAttribute('aria-pressed', open);
+      if (wide.matches) storeSet('opdshelf:toc', open ? '1' : '0');
+      requestAnimationFrame(() => { if (rendition.manager) rendition.resize(); });
+    }
+    showToc(wide.matches && storeGet('opdshelf:toc') !== '0');
+    document.getElementById('tocBtn').onclick = () => showToc(toc.hidden);
+
+    // Positions are only saved once the reader moves, so opening a book does
+    // not replace a point set on another device with the start of its page
+    let moved = false;
+    const prev = () => { moved = true; rendition.prev(); };
+    const next = () => { moved = true; rendition.next(); };
+    document.getElementById('prev').onclick = prev;
+    document.getElementById('next').onclick = next;
+    const onKey = (e) => {
+      if (e.key === 'ArrowLeft' || e.key === 'PageUp') prev();
+      if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') next();
+      if (e.key === 'Escape' && !wide.matches) showToc(false);
+    };
+    document.addEventListener('keydown', onKey);
+    rendition.on('keydown', onKey);
+    // Screen readers name the frame that holds the page
+    rendition.on('rendered', (section, view) => {
+      if (view && view.iframe) view.iframe.title = document.title;
+    });
+
+    // Swipe inside the book
+    let touchX = null;
+    rendition.on('touchstart', (e) => { touchX = e.changedTouches[0].screenX; });
+    rendition.on('touchend', (e) => {
+      if (touchX === null) return;
+      const dx = e.changedTouches[0].screenX - touchX;
+      if (Math.abs(dx) > 50) (dx < 0 ? next : prev)();
+      touchX = null;
+    });
+
+    const tocButtons = [];
+    book.loaded.navigation.then((nav) => {
+      const add = (items, depth) => items.forEach((item) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = item.label.trim();
+        button.style.setProperty('--depth', depth);
+        button.dataset.href = item.href;
+        button.onclick = () => {
+          moved = true;
+          rendition.display(item.href);
+          if (!wide.matches) showToc(false);
+        };
+        tocList.append(button);
+        tocButtons.push(button);
+        if (item.subitems) add(item.subitems, depth + 1);
+      });
+      add(nav.toc, 0);
+      if (!tocButtons.length) tocList.textContent = t('This book has no table of contents.');
+    });
+    const baseHref = (href) => (href || '').split('#')[0].split('/').pop();
+    // The name of the chapter a spine item belongs to: the first contents entry
+    // of the closest spine item at or before it
+    function spineIndexOf(href) {
+      const base = baseHref(href);
+      let found = -1;
+      book.spine.each((item) => { if (found < 0 && baseHref(item.href) === base) found = item.index; });
+      return found;
+    }
+    function chapterOf(href) {
+      const index = spineIndexOf(href);
+      if (index < 0) return '';
+      let best = null;
+      let bestIndex = -1;
+      tocButtons.forEach((b) => {
+        const i = spineIndexOf(b.dataset.href);
+        if (i >= 0 && i <= index && i > bestIndex) { best = b; bestIndex = i; }
+      });
+      return best ? best.textContent : '';
+    }
+    function markChapter(href) {
+      let current = null;
+      tocButtons.forEach((b) => {
+        const match = baseHref(b.dataset.href) === baseHref(href);
+        if (match && !current) current = b;
+        b.setAttribute('aria-current', 'false');
+      });
+      if (current) {
+        current.setAttribute('aria-current', 'true');
+        chapter.textContent = current.textContent;
+      }
+    }
+
+    let locationsReady = false;
+    const located = book.ready.then(() => book.locations.generate(1600)).then(() => {
+      locationsReady = true;
+      const current = rendition.currentLocation();
+      if (current && current.start) showProgress(current.start.cfi);
+    });
+    function percentage(cfi, index) {
+      if (atEnd) return 1;
+      if (locationsReady) return book.locations.percentageFromCfi(cfi);
+      return index / Math.max(1, book.spine.length);
+    }
+    // The last page counts as the whole book: locations put its start just
+    // before 100 %
+    let atEnd = false;
+    function showProgress(cfi) {
+      if (!locationsReady) return;
+      const pct = atEnd ? 100 : Math.round(book.locations.percentageFromCfi(cfi) * 100);
+      progress.textContent = pct + '%';
+      progressBar.style.width = pct + '%';
+    }
+
+    // A position as saved: KOReader's xpointer, the CFI and the text around it
+    function position(contents, range) {
+      const point = range.cloneRange();
+      point.collapse(true);
+      const cfi = contents.cfiFromRange(point);
+      return {
+        progress: XPointer.fromNode(point.startContainer, point.startOffset, contents.sectionIndex) || '',
+        cfi,
+        percentage: percentage(cfi, contents.sectionIndex),
+        context: XPointer.contextAt(contents.document, point.startContainer, point.startOffset),
+      };
+    }
+
+    rendition.on('relocated', (location) => {
+      atEnd = Boolean(location.atEnd);
+      showProgress(location.start.cfi);
+      markChapter(location.start.href);
+      if (!moved) return;
+      const contents = rendition.getContents().find((c) => c.sectionIndex === location.start.index);
+      if (!contents) return;
+      try {
+        sync.save(position(contents, contents.range(location.start.cfi)));
+      } catch {
+        sync.save({ progress: '', cfi: location.start.cfi, percentage: percentage(location.start.cfi, location.start.index) });
+      }
+    });
+
+    // Highlights and notes; selecting text also offers to make it the last position, exactly, on every device
+    const highlights = ReaderHighlights.mount({
+      book, rendition, notes, chapterOf,
+      percentageOf: (cfi, index) => { try { return percentage(cfi, index); } catch { return index / Math.max(1, book.spine.length); } },
+      onJump: () => { moved = true; },
+    });
+    markBtn.onclick = () => {
+      const selection = highlights.selection();
+      if (!selection) return;
+      const { cfiRange, contents } = selection;
+      const range = contents.range(cfiRange);
+      const pos = position(contents, range);
+      pos.context.selected = range.toString().replace(/\s+/g, ' ').trim().slice(0, 200);
+      pos.manual = true;
+      highlights.clearSelection();
+      sync.save(pos).then(() => ReaderSync.toast(t('Last position set. Other devices will open the book here.')));
+    };
+
+    // Turns a saved position into a CFI the reader can open, and the range to highlight
+    async function target(record) {
+      let section = null;
+      let point = null;
+      // A CFI saved by a web reader is exact; otherwise follow KOReader's xpointer
+      if (record.cfi) {
+        try {
+          const cfi = new ePub.CFI(record.cfi);
+          section = book.spine.get(cfi.spinePos);
+          await section.load(book.load.bind(book));
+          const range = cfi.toRange(section.document);
+          if (range) point = { node: range.startContainer, offset: range.startOffset };
+        } catch {
+          point = null;
+        }
+      }
+      if (!point) {
+        section = book.spine.get(XPointer.spineIndex(record.progress));
+        if (!section || XPointer.spineIndex(record.progress) < 0) return null;
+        await section.load(book.load.bind(book));
+        point = XPointer.resolve(record.progress, section.document);
+        if (!point || !XPointer.matches(section.document, point, record.context)) {
+          point = XPointer.find(section.document, record.context, point) || point;
+        }
+        if (!point) return { cfi: section.href };
+      }
+      const doc = section.document;
+      const range = doc.createRange();
+      range.setStart(point.node, point.offset);
+      range.collapse(true);
+      const result = { cfi: section.cfiFromRange(range) };
+      const selected = record.context && record.context.selected;
+      if (record.manual && selected && point.node.nodeType === 3) {
+        const mark = doc.createRange();
+        mark.setStart(point.node, point.offset);
+        mark.setEnd(point.node, Math.min(point.node.length, point.offset + selected.length));
+        if (!mark.collapsed) result.highlight = section.cfiFromRange(mark);
+      }
+      return result;
+    }
+
+    async function open() {
+      const { record, from } = await sync.load();
+      let start = null;
+      if (record) {
+        start = await target(record).catch(() => null);
+        if (!start && record.percentage) {
+          await located;
+          start = { cfi: book.locations.cfiFromPercentage(record.percentage) };
+        }
+      } else if (storeGet(legacyKey)) {
+        start = { cfi: storeGet(legacyKey) };
+      }
+      await rendition.display(start ? start.cfi : undefined).catch(() => rendition.display());
+      status.remove();
+      // Highlights made on other devices, and one to open from the book's page (#note=<id>)
+      notes.load().then(() => highlights.openFromHash());
+      if (start && start.highlight) {
+        rendition.annotations.highlight(start.highlight, {}, null, 'sync-mark');
+        setTimeout(() => rendition.annotations.remove(start.highlight, 'highlight'), 6000);
+      }
+      if (from) {
+        const pct = Math.round((record.percentage || 0) * 100);
+        ReaderSync.toast(record.manual
+          ? t('Opened at the point set on {device}', { device: from })
+          : t('Continuing from {device} ({pct}%)', { device: from, pct }));
+      }
+      // Reading done meanwhile on another device
+      sync.follow((remote) => ReaderSync.remoteToast(remote, async () => {
+        const goal = await target(remote).catch(() => null)
+          || (remote.percentage ? { cfi: book.locations.cfiFromPercentage(remote.percentage) } : null);
+        if (!goal) return;
+        await rendition.display(goal.cfi);
+        if (goal.highlight) {
+          rendition.annotations.highlight(goal.highlight, {}, null, 'sync-mark');
+          setTimeout(() => rendition.annotations.remove(goal.highlight, 'highlight'), 6000);
+        }
+      }), { annotations: (list) => notes.applyRemote(list), resync: () => notes.load() });
+    }
+    book.ready.then(open).catch((err) => { status.textContent = t('Cannot open this book: {reason}', { reason: err }); });
+  })();
+</script>

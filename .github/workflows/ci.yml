@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main, beta]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # Ubuntu's apt mirrors often fail to resolve on GitHub's runners, so the
+    # tools come from Alpine's packages instead, as in the Docker image
+    container: rust:1-alpine
+    steps:
+      - name: Install PDF and comic tools, LuaJIT for the KOReader plugin, and Node
+        run: apk add --no-cache git tar zstd musl-dev poppler-utils libarchive-tools luajit lua5.1-cjson nodejs npm
+
+      - uses: actions/checkout@v4
+
+      - name: KOReader plugin
+        run: |
+          luajit koreader/test/plugin_test.lua koreader/opdshelf.koplugin
+          luajit koreader/test/library_test.lua koreader/opdshelf.koplugin
+          luajit koreader/test/browser_test.lua koreader/opdshelf.koplugin
+
+      - name: Build front-end assets
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Rust components
+        run: rustup component add rustfmt clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --locked
+
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platforms;android-37.0
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Unit tests and APK
+        run: ./gradlew --no-daemon testDebugUnitTest assembleRelease
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opdshelf-android
+          path: android/app/build/outputs/apk/release/app-release.apk
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
